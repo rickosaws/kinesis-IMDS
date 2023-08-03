@@ -1,0 +1,100 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Infrastructure Stack to support streaming EC2 application logs to S3 via the Kinesis Agent
+Parameters:
+  CreateInstanceProfile:
+    Type: String
+    Default: 'Yes'
+Resources:
+  EC2AppLogBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${AWS::AccountId}-kinesis-logs-test'
+  FireHoseRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: 'Allow'
+            Principal:
+              Service:
+                - 'firehose.amazonaws.com'
+            Action:
+              - 'sts:AssumeRole'
+      Path: '/'
+  FireHosePolicy:
+    Type: 'AWS::IAM::Policy'
+    Properties:
+      PolicyName: 'kinesis-firehose-to-s3'
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - 's3:GetBucketLocation'
+              - 's3:GetObject'
+              - 's3:ListBucket'
+              - 's3:PutObject'
+            Resource:
+              - !GetAtt EC2AppLogBucket.Arn
+              - !Sub arn:aws:s3:::${AWS::AccountId}-kinesis-logs-test/* 
+      Roles:
+        - !Ref FireHoseRole
+  InstanceProfile:
+    Type: 'AWS::IAM::InstanceProfile'
+    Properties:
+      Path: '/'
+      Roles:
+        - Ref: 'FireHoseRole'
+  FireHoseDeliveryStream:
+    Type: AWS::KinesisFirehose::DeliveryStream
+    Properties:
+      ExtendedS3DestinationConfiguration:
+        BucketARN: !GetAtt EC2AppLogBucket.Arn
+        RoleARN: !GetAtt FireHoseRole.Arn
+  IMDSPolicy:
+    Type: 'AWS::IAM::Policy'
+    Properties:
+      PolicyName: 'Instance-Metadata-Access'
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - 'ec2:DescribeInstances'
+              - 'ec2:DescribeInstanceAttribute'
+              - 'ec2:DescribeInstanceTypes'
+              - 'ec2:DescribeInstanceStatus'
+              - 'ec2:DescribeTags'
+            Resource: '*'
+      Roles:
+        - !Ref EC2InstanceRole
+  KinesisDirectPutPolicy:
+    Type: 'AWS::IAM::Policy'
+    Properties:
+      PolicyName: 'Direct-Put-to-KDS'
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - 'kinesis:PutRecords'
+              - 'kinesis:PutRecord'
+            Resource: !GetAtt FireHoseDeliveryStream.Arn
+      Roles:
+        - !Ref EC2InstanceRole
+  EC2InstanceRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      RoleName: !Sub '${AWS::AccountId}-ec2-with-kinesis-logging'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: 'Allow'
+            Principal:
+              Service:
+                - 'ec2.amazonaws.com'
+            Action:
+              - 'sts:AssumeRole'
+      Path: '/'
+# Outputs:
